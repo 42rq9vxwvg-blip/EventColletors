@@ -1,0 +1,61 @@
+# In die bestehende Compose-Datei einfuegen (dort, wo n8n & Postgres schon
+# stehen), nicht als eigenstaendige Datei betreiben -- automation_bridge
+# muss dasselbe Netz sein, das n8n/Postgres schon nutzen.
+
+services:
+  fingerprint-normalizer:
+    build: ./fingerprint-normalizer
+    container_name: fingerprint-normalizer
+    restart: unless-stopped
+    command: ["follow"]
+    networks:
+      - automation_bridge
+      -n8n_n8n-net
+    environment:
+      TZ: Europe/Berlin
+      PG_HOST: n8n-postgres          # Servicename im automation_bridge-Netz -- pruefen, falls Postgres anders heisst
+      PG_PORT: "5432"
+      PG_DB: n8n                 # bestaetigt 2026-08-21
+      PG_USER: monitoring_mcp    # bestaetigt: hat SELECT/INSERT/UPDATE auf allen drei Tabellen, kein eigener User noetig
+      PG_PASSWORD_FILE: /run/secrets/monitoring_mcp_pg_password
+      DB_SCHEMA: monitoring       # bestaetigt 2026-08-21 (nicht public)
+      EVENTS_TABLE: events              # bestaetigt (unter DB_SCHEMA.events)
+      EVENTS_ID_COL: id                 # bestaetigt
+      EVENTS_TS_COL: timestamp          # bestaetigt
+      EVENTS_HOST_COL: host             # bestaetigt
+      EVENTS_PROGRAM_COL: program       # bestaetigt
+      EVENTS_MESSAGE_COL: message       # bestaetigt
+      BACKFILL_SINCE_DAYS: "90"
+      BATCH_SIZE: "2000"
+      FOLLOW_BATCH_SIZE: "500"
+      FOLLOW_INTERVAL_SECONDS: "300"
+      LARGE_BATCH_THRESHOLD: "2000"
+    secrets:
+      - monitoring_mcp_pg_password
+
+secrets:
+  monitoring_mcp_pg_password:
+    file: ./secrets/monitoring_mcp_pg_password.txt   # Passwort von monitoring_mcp eintragen, nicht ins Git-Repo aufnehmen
+
+networks:
+  automation_bridge:
+    external: true
+  n8n_n8n-net:
+    external: true
+# Erstlauf (einmalig, ausserhalb der Nachtruhe 23:45-04:00):
+#   docker compose build fingerprint-normalizer
+#   docker compose run --rm fingerprint-normalizer backfill --since-days 90
+#
+# Danach normal hochfahren, uebernimmt laufend weiter:
+#   docker compose up -d fingerprint-normalizer
+#
+# Nach einem Normalisierer-Versionswechsel (CLEANER_VERSION/NORMALIZER_VERSION
+# in normalizer.py erhoehen, Image neu bauen), einmalig:
+#   docker compose run --rm fingerprint-normalizer migrate --dry-run
+#   docker compose run --rm fingerprint-normalizer migrate
+#
+# Hinweis: fingerprints und event_fingerprints existieren bereits in der DB
+# (angelegt vor diesem Snippet, vermutlich ueber 001_create_fingerprints.sql
+# und 002_event_fingerprints.sql per Hand ausgefuehrt) -- die beiden SQL-
+# Dateien liegen trotzdem bei, fuer den Fall, dass die Tabellen woanders
+# (Test-/Staging-Umgebung) neu angelegt werden muessen. Erst 001, dann 002.

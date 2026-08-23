@@ -1,0 +1,123 @@
+services:
+  dsm-syslog-relay:
+    build: ./dsm-syslog-relay
+    container_name: dsm-syslog-relay
+    restart: unless-stopped
+    ports:
+      # DSM sendet an diesen Port (Container-intern identisch)
+      - "6514:6514"
+    environment:
+      LISTEN_HOST: "0.0.0.0"
+      LISTEN_PORT: "6514"
+      N8N_WEBHOOK_URL: "${N8N_WEBHOOK_URL}"
+      N8N_WEBHOOK_TOKEN: "${N8N_WEBHOOK_TOKEN}"
+      BACKUP_LOG_PATH: "/var/log/dsm-syslog-backup.log"
+    volumes:
+      - syslog-backup:/var/log
+    networks:
+      - automation_bridge
+
+  fritzbox-poller:
+    build: ./fritzbox-poller
+    container_name: fritzbox-poller
+    restart: unless-stopped
+    environment:
+      FRITZ_ADDRESS: "${FRITZ_ADDRESS}"
+      FRITZ_USER: "${FRITZ_USER}"
+      FRITZ_PASSWORD: "${FRITZ_PASSWORD}"
+      POLL_INTERVAL_SECONDS: "${POLL_INTERVAL_SECONDS:-600}"
+      OVERLAP_SECONDS: "${OVERLAP_SECONDS:-120}"
+      N8N_WEBHOOK_URL: "${N8N_WEBHOOK_URL}"
+      N8N_WEBHOOK_TOKEN: "${N8N_WEBHOOK_TOKEN}"
+    networks:
+      - automation_bridge
+
+  n8n-log-watcher:
+    build: ./n8n-log-watcher
+    container_name: n8n-log-watcher
+    restart: unless-stopped
+    environment:
+      N8N_CONTAINER_NAME: "n8n"
+      N8N_WEBHOOK_URL: "http://n8n:5678/webhook/dsm-syslog"
+      N8N_WEBHOOK_TOKEN: "${N8N_WEBHOOK_TOKEN}"
+      BACKUP_LOG_PATH: "/var/log/n8n-log-watcher-backup.log"
+      # Einzige Stelle fuer den lokalen Vorfilter (siehe watcher.py) - ein
+      # Regex pro Zeile. Aendern + "docker compose up -d" reicht, kein
+      # Rebuild noetig. Leer lassen = kein Vorfilter (nicht empfohlen,
+      # siehe Warnung beim Start in den Logs).
+      N8N_LOG_DENYLIST: |
+        INFO \(\d+\): Skipping operation
+        "operationId":
+        "method":\s*"(get|post|put|delete|patch)"
+        "pattern":\s*"/api/
+        ^\s*operation:\s*\{
+        ^\s*\}\s*$
+        Refresh token rotated and new access token issued
+        Deregistered all crons
+        Pruning old insights data
+        \[DEP0060\] DeprecationWarning
+        Use `node --trace-deprecation
+        ^\s*$
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - n8n-watcher-backup:/var/log
+    networks:
+      - automation_bridge
+      
+      
+  fingerprint-normalizer:
+# Erstlauf (einmalig, ausserhalb der Nachtruhe 23:45-04:00):
+#   docker compose build fingerprint-normalizer
+#   docker compose run --rm fingerprint-normalizer backfill --since-days 90
+#
+# Danach normal hochfahren, uebernimmt laufend weiter:
+#   docker compose up -d fingerprint-normalizer
+#
+# Nach einem Normalisierer-Versionswechsel (CLEANER_VERSION/NORMALIZER_VERSION
+# in normalizer.py erhoehen, Image neu bauen), einmalig:
+#   docker compose run --rm fingerprint-normalizer migrate --dry-run
+#   docker compose run --rm fingerprint-normalizer migrate
+    build: ./fingerprint-normalizer
+    container_name: fingerprint-normalizer
+    restart: unless-stopped
+    command: ["follow"]
+    networks:
+      - automation_bridge
+      - n8n_n8n-net
+    environment:
+      TZ: Europe/Berlin
+      PG_HOST: n8n-postgres          # Servicename im automation_bridge-Netz -- pruefen, falls Postgres anders heisst
+      PG_PORT: "5432"
+      PG_DB: n8n                 # bestaetigt 2026-08-21
+      PG_USER: monitoring_mcp    # bestaetigt: hat SELECT/INSERT/UPDATE auf allen drei Tabellen, kein eigener User noetig
+      PG_PASSWORD_FILE: /run/secrets/monitoring_mcp_pg_password
+      DB_SCHEMA: monitoring       # bestaetigt 2026-08-21 (nicht public)
+      EVENTS_TABLE: events              # bestaetigt (unter DB_SCHEMA.events)
+      EVENTS_ID_COL: id                 # bestaetigt
+      EVENTS_TS_COL: timestamp          # bestaetigt
+      EVENTS_HOST_COL: host             # bestaetigt
+      EVENTS_PROGRAM_COL: program       # bestaetigt
+      EVENTS_MESSAGE_COL: message       # bestaetigt
+      BACKFILL_SINCE_DAYS: "90"
+      BATCH_SIZE: "2000"
+      FOLLOW_BATCH_SIZE: "500"
+      FOLLOW_INTERVAL_SECONDS: "300"
+      LARGE_BATCH_THRESHOLD: "2000"
+    secrets:
+      - monitoring_mcp_pg_password
+
+
+secrets:
+  monitoring_mcp_pg_password:
+    file: ./secrets/monitoring_mcp_pg_password.txt 
+    
+    
+volumes:
+  syslog-backup:
+  n8n-watcher-backup:
+  
+networks:
+  automation_bridge:
+    external: true
+  n8n_n8n-net:
+    external: true
