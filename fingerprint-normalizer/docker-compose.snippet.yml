@@ -30,12 +30,20 @@ services:
       FOLLOW_BATCH_SIZE: "500"
       FOLLOW_INTERVAL_SECONDS: "300"
       LARGE_BATCH_THRESHOLD: "2000"
+      # Phase 1 -- LLM-Triage (nur relevant fuer den "triage"-Modus, s.u.)
+      ANTHROPIC_API_KEY_FILE: /run/secrets/anthropic_api_key
+      TRIAGE_MODEL: claude-sonnet-5
+      TRIAGE_BATCH_SIZE: "20"
+      TRIAGE_MAX_PER_RUN: "60"
     secrets:
       - monitoring_mcp_pg_password
+      - anthropic_api_key
 
 secrets:
   monitoring_mcp_pg_password:
     file: ./secrets/monitoring_mcp_pg_password.txt   # Passwort von monitoring_mcp eintragen, nicht ins Git-Repo aufnehmen
+  anthropic_api_key:
+    file: ./secrets/anthropic_api_key.txt   # API-Key eintragen, nicht ins Git-Repo aufnehmen
 
 networks:
   automation_bridge:
@@ -54,8 +62,20 @@ networks:
 #   docker compose run --rm fingerprint-normalizer migrate --dry-run
 #   docker compose run --rm fingerprint-normalizer migrate
 #
+# Phase 1 -- LLM-Triage, EINMALIGER Testlauf ohne Schreibvorgang:
+#   docker compose run --rm fingerprint-normalizer triage --dry-run
+#
+# Danach als naechtlicher Batch per Host-Crontab (nicht als eigener
+# "restart: unless-stopped"-Service -- der Job soll einmal laufen und
+# beenden, nicht dauerhaft einen Container besetzen). Ausserhalb der
+# Nachtruhe waehlen, z.B. 04:30 Uhr:
+#   30 4 * * * cd /pfad/zur/compose-datei && docker compose run --rm fingerprint-normalizer triage >> /var/log/fingerprint-triage.log 2>&1
+#
 # Hinweis: fingerprints und event_fingerprints existieren bereits in der DB
 # (angelegt vor diesem Snippet, vermutlich ueber 001_create_fingerprints.sql
 # und 002_event_fingerprints.sql per Hand ausgefuehrt) -- die beiden SQL-
 # Dateien liegen trotzdem bei, fuer den Fall, dass die Tabellen woanders
 # (Test-/Staging-Umgebung) neu angelegt werden muessen. Erst 001, dann 002.
+# 005_llm_triage_review.sql (Phase 1) manuell in pgAdmin ausfuehren, bevor
+# der "triage"-Modus zum ersten Mal laeuft -- ohne die Migration schlaegt
+# das UPDATE auf die neue Spalte llm_vorschlag fehl.
