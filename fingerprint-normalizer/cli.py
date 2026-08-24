@@ -1,5 +1,5 @@
 """
-Dispatcher. First argv is the mode: backfill | follow | migrate | triage.
+Dispatcher. First argv is the mode: backfill | follow | migrate.
 Everything after is passed through to that mode's own argparse.
 
 ASCII-only per project rule 5.
@@ -18,12 +18,12 @@ def _lazy_import(name):
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: cli.py <backfill|follow|migrate|triage> [args...]", file=sys.stderr)
+        print("Usage: cli.py <backfill|follow|migrate> [args...]", file=sys.stderr)
         return 2
 
     mode, rest = sys.argv[1], sys.argv[2:]
-    if mode not in ("backfill", "follow", "migrate", "triage"):
-        print(f"Unbekannter Modus: {mode!r}. Erlaubt: backfill, follow, migrate, triage.", file=sys.stderr)
+    if mode not in ("backfill", "follow", "migrate"):
+        print(f"Unbekannter Modus: {mode!r}. Erlaubt: backfill, follow, migrate.", file=sys.stderr)
         return 2
 
     module = _lazy_import(mode)
